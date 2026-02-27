@@ -612,12 +612,78 @@ else:
                     st.error("❌ Completa todos los campos")
         
         with tab2:
-            st.subheader("Últimas Ventas")
+            st.subheader("Historial de Ventas")
+
+            if 'mostrar_pwd_ventas' not in st.session_state:
+                st.session_state.mostrar_pwd_ventas = False
+
             if not ventas.empty:
-                ventas_display = ventas.tail(20)[['Fecha', 'Cliente', 'Caja', 'Cantidad', 'Monto']].copy()
+                ventas_display = ventas[['Fecha', 'Cliente', 'Caja', 'Cantidad', 'Monto', 'Es_Credito']].copy()
                 ventas_display['Fecha'] = ventas_display['Fecha'].dt.strftime("%d/%m/%Y")
-                ventas_display['Monto'] = ventas_display['Monto'].apply(lambda x: f"${x:,.0f}")
-                st.dataframe(ventas_display, use_container_width=True, hide_index=True)
+                ventas_display.insert(0, 'Seleccionar', False)
+
+                edited_df = st.data_editor(
+                    ventas_display,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Seleccionar": st.column_config.CheckboxColumn("✓", default=False, width="small"),
+                        "Monto": st.column_config.NumberColumn("Monto ($)", format="$%d"),
+                    },
+                    key="tabla_ventas_historial"
+                )
+
+                indices_seleccionados = edited_df[edited_df['Seleccionar']].index.tolist()
+                num_seleccionados = len(indices_seleccionados)
+
+                if num_seleccionados > 0:
+                    st.info(f"📋 {num_seleccionados} venta(s) seleccionada(s)")
+                    if st.button(
+                        f"🗑️ Eliminar {num_seleccionados} Venta(s) Seleccionada(s)",
+                        type="primary",
+                        key="btn_eliminar_ventas"
+                    ):
+                        st.session_state.mostrar_pwd_ventas = True
+
+                if st.session_state.get('mostrar_pwd_ventas', False):
+                    st.warning("⚠️ Esta acción eliminará las ventas seleccionadas y restaurará el stock.")
+                    pwd = st.text_input("🔑 Contraseña de confirmación:", type="password", key="pwd_confirm_ventas")
+
+                    col_ok, col_cancel = st.columns(2)
+                    with col_ok:
+                        if st.button("✅ Confirmar Eliminación", key="confirmar_eliminar_ventas"):
+                            if pwd == "112915":
+                                ventas_a_eliminar = ventas.iloc[indices_seleccionados]
+
+                                # Restaurar stock
+                                for _, venta in ventas_a_eliminar.iterrows():
+                                    idx_caja = inventario[inventario['Caja'] == venta['Caja']].index
+                                    if not idx_caja.empty:
+                                        inventario.at[idx_caja[0], 'Cantidad'] += int(venta['Cantidad'])
+
+                                # Eliminar créditos asociados
+                                for _, venta in ventas_a_eliminar.iterrows():
+                                    if venta.get('Es_Credito', False):
+                                        fecha_venta = venta['Fecha'].date()
+                                        mask = (
+                                            (creditos['Cliente'] == venta['Cliente']) &
+                                            (creditos['Monto'] == venta['Monto']) &
+                                            (creditos['Fecha_Credito'].dt.date == fecha_venta)
+                                        )
+                                        creditos = creditos[~mask].reset_index(drop=True)
+
+                                # Eliminar ventas
+                                ventas = ventas.drop(indices_seleccionados).reset_index(drop=True)
+                                guardar_datos(inventario, clientes, ventas, creditos)
+                                st.session_state.mostrar_pwd_ventas = False
+                                st.success(f"✅ {num_seleccionados} venta(s) eliminada(s) y stock restaurado.")
+                                st.rerun()
+                            else:
+                                st.error("❌ Contraseña incorrecta")
+                    with col_cancel:
+                        if st.button("❌ Cancelar", key="cancelar_eliminar_ventas"):
+                            st.session_state.mostrar_pwd_ventas = False
+                            st.rerun()
             else:
                 st.info("Sin ventas")
     
